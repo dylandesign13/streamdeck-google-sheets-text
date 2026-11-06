@@ -13,7 +13,7 @@
   ],
   "Nodejs": { "Version": "20", "Debug": "enabled" },
   "CodePath": "bin/plugin.js",
-  "Icon": "images/action",
+  "Icon": "images/plugin",
   "Category": "Google Sheets Text",
   "Actions": [
     {
@@ -23,7 +23,7 @@
       "Icon": "images/action",
       "Controllers": ["Keypad"],
       "PropertyInspectorPath": "ui/index.html",
-      "States": [{ "Image": "images/action", "TitleAlignment": "middle" }]
+      "States": [{ "Image": "images/state", "TitleAlignment": "middle" }]
     }
   ]
 }
