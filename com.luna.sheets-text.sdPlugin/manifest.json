@@ -7,7 +7,7 @@
   "SDKVersion": 2,
   "Software": { "MinimumVersion": "6.9" },
   "CodePath": "bin/plugin.js",
-  "Nodejs": { "Version": "20", "大": "" },
+  "Nodejs": { "Version": "20" },
   "Actions": [
     {
       "UUID": "com.luna.sheets-text.copy",
@@ -16,11 +16,11 @@
       "Icon": "images/action",
       "Controllers": ["Keypad"],
       "PropertyInspectorPath": "ui/index.html",
-      "Supported լեզ": ["en", "fr"],
+      "SupportedLanguages": ["en", "fr"],
       "States": [{ "Image": "images/action", "TitleAlignment": "middle" }],
-      "Userожет": { "TriggerDescription": "Copie puis colle le texte sélectionné" }
+      "User/Visible": true,
+      "PropertyInspector": { "PropertyInspectorPath": "ui/index.html" }
     }
   ],
-  "Profiles": [],
-  "SDKVersion": 2
+  "Profiles": []
 }
