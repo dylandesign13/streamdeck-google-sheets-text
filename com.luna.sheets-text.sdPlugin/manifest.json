@@ -1,4 +1,5 @@
 {
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
   "UUID": "com.luna.sheets-text",
   "Name": "Google Sheets Text",
   "Description": "Copie des textes partagés depuis Google Sheets",
@@ -6,8 +7,14 @@
   "Version": "1.0.0.0",
   "SDKVersion": 2,
   "Software": { "MinimumVersion": "6.9" },
+  "OS": [
+    { "Platform": "windows", "MinimumVersion": "10" },
+    { "Platform": "mac", "MinimumVersion": "13" }
+  ],
+  "Nodejs": { "Version": "20", "Debug": "enabled" },
   "CodePath": "bin/plugin.js",
-  "Nodejs": { "Version": "20" },
+  "Icon": "images/action",
+  "Category": "Google Sheets Text",
   "Actions": [
     {
       "UUID": "com.luna.sheets-text.copy",
@@ -16,11 +23,7 @@
       "Icon": "images/action",
       "Controllers": ["Keypad"],
       "PropertyInspectorPath": "ui/index.html",
-      "SupportedLanguages": ["en", "fr"],
-      "States": [{ "Image": "images/action", "TitleAlignment": "middle" }],
-      "User/Visible": true,
-      "PropertyInspector": { "PropertyInspectorPath": "ui/index.html" }
+      "States": [{ "Image": "images/action", "TitleAlignment": "middle" }]
     }
-  ],
-  "Profiles": []
+  ]
 }

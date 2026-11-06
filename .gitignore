@@ -1,0 +1,4 @@
+node_modules/
+dist/
+com.luna.sheets-text.sdPlugin/bin/
+com.luna.sheets-text.sdPlugin/logs/
