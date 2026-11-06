@@ -76,18 +76,26 @@ class CopyText extends SingletonAction<Settings> {
   // Le panneau de configuration demande la liste des ID / langues de la feuille
   override async onSendToPlugin(ev: SendToPluginEvent<JsonValue, Settings>) {
     const payload = ev.payload as { type?: string; csvUrl?: string };
+    streamDeck.logger.info(`onSendToPlugin reçu : ${JSON.stringify(payload)}`);
     if (payload?.type !== "getOptions") return;
+    const reply = async (data: JsonValue) => {
+      try {
+        await streamDeck.ui.sendToPropertyInspector(data);
+      } catch (e) {
+        streamDeck.logger.error(`Envoi vers le panneau impossible : ${e instanceof Error ? e.message : String(e)}`);
+      }
+    };
     try {
       if (!payload.csvUrl) throw new Error("URL CSV manquante");
-      const rows = await fetchRows(payload.csvUrl, 0);
+      const rows = await fetchRows(payload.csvUrl.trim(), 0);
       const options = rows.slice(1)
         .filter(r => (r[0] ?? "").trim() !== "")
         .map(r => ({ id: (r[0] ?? "").trim(), language: (r[1] ?? "").trim(), preview: (r[2] ?? "").slice(0, 60) }));
-      await streamDeck.ui.sendToPropertyInspector({ type: "options", options });
+      await reply({ type: "options", options });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       streamDeck.logger.error(message);
-      await streamDeck.ui.sendToPropertyInspector({ type: "error", message });
+      await reply({ type: "error", message });
     }
   }
 
@@ -96,7 +104,7 @@ class CopyText extends SingletonAction<Settings> {
     try {
       if (!s.csvUrl) throw new Error("Configurez l’URL CSV dans les propriétés");
       const seconds = Math.max(0, Math.min(3600, Number(s.refreshSeconds ?? 15)));
-      const rows = await fetchRows(s.csvUrl, seconds * 1000);
+      const rows = await fetchRows(s.csvUrl.trim(), seconds * 1000);
       let text = "";
       if (s.mode === "cell") text = cellValue(rows, s.cell ?? "");
       else {

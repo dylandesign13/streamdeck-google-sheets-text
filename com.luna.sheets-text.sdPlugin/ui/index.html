@@ -38,7 +38,7 @@
 (function () {
   var FIELDS = ["csvUrl", "mode", "id", "language", "cell", "refreshSeconds"];
   var DEFAULTS = { mode: "lookup", refreshSeconds: 15 };
-  var ws = null, uuid = null, settings = {}, options = []; // options: [{id, language, preview}]
+  var ws = null, uuid = null, settings = {}, options = [], loadTimer = null;
 
   function $(id) { return document.getElementById(id); }
 
@@ -108,14 +108,55 @@
     updateVisibility();
   }
 
+  // Charge la feuille directement depuis le panneau (aucun aller-retour avec le plugin)
+  function parseCsv(csv) {
+    var rows = [], row = [], field = "", quoted = false;
+    for (var i = 0; i < csv.length; i++) {
+      var ch = csv[i];
+      if (quoted) {
+        if (ch === '"' && csv[i + 1] === '"') { field += '"'; i++; }
+        else if (ch === '"') quoted = false;
+        else field += ch;
+      } else if (ch === '"') quoted = true;
+      else if (ch === ",") { row.push(field); field = ""; }
+      else if (ch === "\n" || ch === "\r") {
+        if (ch === "\r" && csv[i + 1] === "\n") i++;
+        row.push(field); rows.push(row); row = []; field = "";
+      } else field += ch;
+    }
+    if (field || row.length) { row.push(field); rows.push(row); }
+    return rows;
+  }
+
+  function applyRows(rows) {
+    options = rows.slice(1)
+      .filter(function (r) { return (r[0] || "").trim() !== ""; })
+      .map(function (r) { return { id: (r[0] || "").trim(), language: (r[1] || "").trim() }; });
+    settings.id = $("id").value || settings.id;
+    refreshIds();
+    save();
+    setStatus(options.length + " texte(s) chargé(s)", "ok");
+  }
+
   function requestList() {
-    if (!ws || ws.readyState !== 1) return;
-    if (!$("csvUrl").value) { setStatus("Collez d’abord l’URL CSV", "err"); return; }
+    var url = $("csvUrl").value.trim();
+    if (!url) { setStatus("Collez d’abord l’URL CSV", "err"); return; }
     setStatus("Chargement…");
-    ws.send(JSON.stringify({
-      event: "sendToPlugin", context: uuid,
-      payload: { type: "getOptions", csvUrl: $("csvUrl").value }
-    }));
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, 12000);
+    fetch(url, { signal: controller.signal })
+      .then(function (r) {
+        if (!r.ok) throw new Error("Google Sheets HTTP " + r.status + " (feuille non publiée ?)");
+        return r.text();
+      })
+      .then(function (text) {
+        if (/^\s*<(!doctype|html)/i.test(text)) throw new Error("Ce lien n’est pas un CSV : publiez la feuille en CSV");
+        applyRows(parseCsv(text));
+      })
+      .catch(function (e) {
+        setStatus(e && e.name === "AbortError" ? "Délai dépassé (12 s)" : (e && e.message ? e.message : "Erreur de chargement"), "err");
+      })
+      .then(function () { clearTimeout(timer); });
   }
 
   FIELDS.forEach(function (f) {
@@ -139,21 +180,6 @@
     ws.onopen = function () {
       ws.send(JSON.stringify({ event: registerEvent, uuid: propertyInspectorUUID }));
       if (settings.csvUrl) requestList();
-    };
-    ws.onmessage = function (evt) {
-      var msg;
-      try { msg = JSON.parse(evt.data); } catch (e) { return; }
-      if (msg.event !== "sendToPropertyInspector" || !msg.payload) return;
-      var p = msg.payload;
-      if (p.type === "options") {
-        options = p.options || [];
-        settings.id = $("id").value || settings.id;
-        refreshIds();
-        save();
-        setStatus(options.length + " texte(s) chargé(s)", "ok");
-      } else if (p.type === "error") {
-        setStatus(p.message || "Erreur", "err");
-      }
     };
   };
 })();
