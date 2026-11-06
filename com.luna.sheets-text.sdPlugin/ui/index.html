@@ -1,1 +1,81 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Google Sheets Text</title><link rel="stylesheet" href="https://sdpi-components.dev/releases/v3/sdpi.css"><script src="https://sdpi-components.dev/releases/v3/sdpi.js"></script></head><body><sdpi-item label="URL CSV publiée"><sdpi-textfield setting="csvUrl" placeholder="https://docs.google.com/spreadsheets/d/.../pub?output=csv"></sdpi-textfield></sdpi-item><sdpi-item label="Mode"><sdpi-select setting="mode"><option value="lookup">Recherche par ID + langue (A/B → C)</option><option value="cell">Cellule directe</option></sdpi-select></sdpi-item><sdpi-item label="ID (colonne A)"><sdpi-textfield setting="id" placeholder="Bienvenue"></sdpi-textfield></sdpi-item><sdpi-item label="Langue (colonne B)"><sdpi-textfield setting="language" placeholder="Fra"></sdpi-textfield></sdpi-item><sdpi-item label="Cellule (mode direct)"><sdpi-textfield setting="cell" placeholder="C2"></sdpi-textfield></sdpi-item><sdpi-item label="Actualisation (secondes)"><sdpi-textfield setting="refreshSeconds" value="15" placeholder="15"></sdpi-textfield></sdpi-item><sdpi-item label="À savoir"><div>Le texte est copié puis collé dans la fenêtre active. Publiez la feuille en CSV ; toute personne disposant de l’URL peut lire son contenu.</div></sdpi-item></body></html>
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Google Sheets Text</title>
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body { font-family: "Segoe UI", system-ui, sans-serif; font-size: 13px; color: #d8d8d8; padding: 8px 12px; }
+  .row { display: flex; align-items: center; margin: 8px 0; }
+  .row label { width: 150px; flex-shrink: 0; color: #d8d8d8; }
+  .row input, .row select { flex: 1; min-width: 0; background: #2d2d2d; color: #ffffff; border: 1px solid #4a4a4a; border-radius: 3px; padding: 5px 7px; font-size: 13px; }
+  .row input:focus, .row select:focus { outline: 1px solid #1a73e8; border-color: #1a73e8; }
+  .note { margin-top: 12px; padding: 8px 10px; background: #262626; border-radius: 4px; color: #b8b8b8; line-height: 1.4; }
+</style>
+</head>
+<body>
+  <div class="row"><label for="csvUrl">URL CSV publiée</label><input id="csvUrl" type="text" placeholder="https://docs.google.com/spreadsheets/d/.../pub?output=csv"></div>
+  <div class="row"><label for="mode">Mode</label>
+    <select id="mode">
+      <option value="lookup">Recherche par ID + langue (A/B → C)</option>
+      <option value="cell">Cellule directe</option>
+    </select>
+  </div>
+  <div class="row" data-mode="lookup"><label for="id">ID (colonne A)</label><input id="id" type="text" placeholder="Bienvenue"></div>
+  <div class="row" data-mode="lookup"><label for="language">Langue (colonne B)</label><input id="language" type="text" placeholder="Fra"></div>
+  <div class="row" data-mode="cell"><label for="cell">Cellule</label><input id="cell" type="text" placeholder="C2"></div>
+  <div class="row"><label for="refreshSeconds">Actualisation (secondes)</label><input id="refreshSeconds" type="number" min="0" max="3600" placeholder="15"></div>
+  <div class="note">Le texte est copié puis collé dans la fenêtre active. Publiez la feuille en CSV (Fichier → Partager → Publier sur le Web) ; toute personne disposant de l’URL peut lire son contenu.</div>
+
+<script>
+(function () {
+  var FIELDS = ["csvUrl", "mode", "id", "language", "cell", "refreshSeconds"];
+  var DEFAULTS = { mode: "lookup", refreshSeconds: 15 };
+  var ws = null, uuid = null, settings = {};
+
+  function save() {
+    if (!ws || ws.readyState !== 1) return;
+    FIELDS.forEach(function (f) {
+      var el = document.getElementById(f);
+      settings[f] = f === "refreshSeconds" ? Number(el.value || 15) : el.value;
+    });
+    ws.send(JSON.stringify({ event: "setSettings", context: uuid, payload: settings }));
+  }
+
+  function updateVisibility() {
+    var mode = document.getElementById("mode").value;
+    document.querySelectorAll("[data-mode]").forEach(function (row) {
+      row.style.display = row.getAttribute("data-mode") === mode ? "flex" : "none";
+    });
+  }
+
+  function load() {
+    FIELDS.forEach(function (f) {
+      var v = settings[f] !== undefined ? settings[f] : DEFAULTS[f];
+      document.getElementById(f).value = v === undefined ? "" : v;
+    });
+    updateVisibility();
+  }
+
+  FIELDS.forEach(function (f) {
+    var el = document.getElementById(f);
+    el.addEventListener("input", save);
+    el.addEventListener("change", function () { if (f === "mode") updateVisibility(); save(); });
+  });
+
+  load();
+
+  window.connectElgatoStreamDeckSocket = function (port, propertyInspectorUUID, registerEvent, info, actionInfo) {
+    uuid = propertyInspectorUUID;
+    try { settings = (JSON.parse(actionInfo).payload || {}).settings || {}; } catch (e) { settings = {}; }
+    load();
+    ws = new WebSocket("ws://127.0.0.1:" + port);
+    ws.onopen = function () {
+      ws.send(JSON.stringify({ event: registerEvent, uuid: propertyInspectorUUID }));
+    };
+  };
+})();
+</script>
+</body>
+</html>

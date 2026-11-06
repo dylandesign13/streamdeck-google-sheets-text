@@ -63,10 +63,12 @@ function paste(text: string): Promise<void> {
   });
 }
 
+const DEFAULT_TITLE = "Sheets\nTexte";
+
 @action({ UUID: "com.luna.sheets-text.copy" })
 class CopyText extends SingletonAction<Settings> {
   override async onWillAppear(ev: WillAppearEvent<Settings>) {
-    await ev.action.setTitle("Sheets\\nTexte");
+    await ev.action.setTitle(DEFAULT_TITLE);
   }
   override async onKeyDown(ev: KeyDownEvent<Settings>) {
     const s = ev.payload.settings;
@@ -89,7 +91,9 @@ class CopyText extends SingletonAction<Settings> {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       streamDeck.logger.error(message);
+      await ev.action.showAlert();
       await ev.action.setTitle("Erreur");
+      setTimeout(() => { ev.action.setTitle(DEFAULT_TITLE).catch(() => {}); }, 3000);
     }
   }
 }
