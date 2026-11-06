@@ -23,8 +23,8 @@ function chunk(type, data) {
   return Buffer.concat([len, body, crc]);
 }
 
-// Dessine une feuille de tableur verte sur fond sombre
-function png(size) {
+// Feuille de tableur verte. bg = fond (null = transparent)
+function png(size, bg) {
   const raw = Buffer.alloc((size * 4 + 1) * size);
   const m = Math.round(size * 0.16);
   const cols = 3, rows = 4;
@@ -34,7 +34,7 @@ function png(size) {
     const o = y * (size * 4 + 1);
     raw[o] = 0;
     for (let x = 0; x < size; x++) {
-      let px = [24, 28, 36, 255];
+      let px = bg ? [...bg, 255] : [0, 0, 0, 0];
       const inside = x >= m && x < size - m && y >= m && y < size - m;
       if (inside) {
         px = [255, 255, 255, 255];
@@ -60,7 +60,17 @@ function png(size) {
   ]);
 }
 
-for (const [name, size] of [['plugin', 256], ['plugin@2x', 512]]) {
-  writeFileSync(`${dir}/${name}.png`, png(size));
+const dark = [24, 28, 36];
+const files = [
+  // [nom, taille, fond]
+  ['plugin', 256, dark],
+  ['plugin@2x', 512, dark],
+  ['action', 20, null],
+  ['action@2x', 40, null],
+  ['state', 72, dark],
+  ['state@2x', 144, dark],
+];
+for (const [name, size, bg] of files) {
+  writeFileSync(`${dir}/${name}.png`, png(size, bg));
 }
 console.log('Icônes PNG générées');

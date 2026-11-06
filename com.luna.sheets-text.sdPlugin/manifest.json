@@ -15,6 +15,7 @@
   "CodePath": "bin/plugin.js",
   "Icon": "images/plugin",
   "Category": "Google Sheets Text",
+  "CategoryIcon": "images/plugin",
   "Actions": [
     {
       "UUID": "com.luna.sheets-text.copy",
