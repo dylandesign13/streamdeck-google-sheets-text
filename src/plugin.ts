@@ -1,4 +1,5 @@
-import streamDeck, { action, KeyDownEvent, SingletonAction, WillAppearEvent } from "@elgato/streamdeck";
+import streamDeck, { action, KeyDownEvent, SendToPluginEvent, SingletonAction, WillAppearEvent } from "@elgato/streamdeck";
+import type { JsonValue } from "@elgato/streamdeck";
 import { execFile } from "node:child_process";
 
 interface Settings {
@@ -68,8 +69,28 @@ const DEFAULT_TITLE = "Sheets\nTexte";
 @action({ UUID: "com.luna.sheets-text.copy" })
 class CopyText extends SingletonAction<Settings> {
   override async onWillAppear(ev: WillAppearEvent<Settings>) {
-    await ev.action.setTitle(DEFAULT_TITLE);
+    const s = ev.payload.settings;
+    await ev.action.setTitle(s.mode !== "cell" && s.id ? `${s.id}\n${s.language ?? ""}` : DEFAULT_TITLE);
   }
+
+  // Le panneau de configuration demande la liste des ID / langues de la feuille
+  override async onSendToPlugin(ev: SendToPluginEvent<JsonValue, Settings>) {
+    const payload = ev.payload as { type?: string; csvUrl?: string };
+    if (payload?.type !== "getOptions") return;
+    try {
+      if (!payload.csvUrl) throw new Error("URL CSV manquante");
+      const rows = await fetchRows(payload.csvUrl, 0);
+      const options = rows.slice(1)
+        .filter(r => (r[0] ?? "").trim() !== "")
+        .map(r => ({ id: (r[0] ?? "").trim(), language: (r[1] ?? "").trim(), preview: (r[2] ?? "").slice(0, 60) }));
+      await streamDeck.ui.sendToPropertyInspector({ type: "options", options });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      streamDeck.logger.error(message);
+      await streamDeck.ui.sendToPropertyInspector({ type: "error", message });
+    }
+  }
+
   override async onKeyDown(ev: KeyDownEvent<Settings>) {
     const s = ev.payload.settings;
     try {
