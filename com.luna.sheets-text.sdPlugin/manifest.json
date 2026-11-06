@@ -1,0 +1,26 @@
+{
+  "UUID": "com.luna.sheets-text",
+  "Name": "Google Sheets Text",
+  "Description": "Copie des textes partagés depuis Google Sheets",
+  "Author": "Luna",
+  "Version": "1.0.0.0",
+  "SDKVersion": 2,
+  "Software": { "MinimumVersion": "6.9" },
+  "CodePath": "bin/plugin.js",
+  "Nodejs": { "Version": "20", "大": "" },
+  "Actions": [
+    {
+      "UUID": "com.luna.sheets-text.copy",
+      "Name": "Google Sheets Text",
+      "Tooltip": "Copie un texte depuis Google Sheets",
+      "Icon": "images/action",
+      "Controllers": ["Keypad"],
+      "PropertyInspectorPath": "ui/index.html",
+      "Supported լեզ": ["en", "fr"],
+      "States": [{ "Image": "images/action", "TitleAlignment": "middle" }],
+      "Userожет": { "TriggerDescription": "Copie puis colle le texte sélectionné" }
+    }
+  ],
+  "Profiles": [],
+  "SDKVersion": 2
+}

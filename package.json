@@ -1,0 +1,17 @@
+{
+  "name": "streamdeck-google-sheets-text",
+  "version": "1.0.0",
+  "description": "Stream Deck plugin to copy shared Google Sheets text",
+  "type": "module",
+  "scripts": {
+    "build": "streamdeck plugin:pack com.luna.sheets-text.sdPlugin --output dist",
+    "dev": "streamdeck dev com.luna.sheets-text.sdPlugin"
+  },
+  "dependencies": {
+    "@elgato/streamdeck": "^2.0.0"
+  },
+  "devDependencies": {
+    "@elgato/cli": "^1.0.0",
+    "typescript": "^5.8.3"
+  }
+}
