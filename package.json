@@ -4,9 +4,10 @@
   "description": "Stream Deck plugin to copy shared Google Sheets text",
   "type": "module",
   "scripts": {
+    "icons": "node scripts/make-icons.mjs",
     "bundle": "esbuild src/plugin.ts --bundle --platform=node --target=node20 --format=esm --outfile=com.luna.sheets-text.sdPlugin/bin/plugin.js --banner:js=\"import {createRequire} from 'module';const require=createRequire(import.meta.url);\"",
-    "build": "npm run bundle && streamdeck pack com.luna.sheets-text.sdPlugin --output dist --force",
-    "dev": "npm run bundle && streamdeck link com.luna.sheets-text.sdPlugin"
+    "build": "npm run icons && npm run bundle && streamdeck pack com.luna.sheets-text.sdPlugin --output dist --force",
+    "dev": "npm run icons && npm run bundle && streamdeck link com.luna.sheets-text.sdPlugin"
   },
   "dependencies": {
     "@elgato/streamdeck": "^1.4.0"
