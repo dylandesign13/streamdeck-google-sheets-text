@@ -26,6 +26,8 @@ const AUTO_REFRESH_MS = 60_000;
 
 const cache = new Map<string, { at: number; rows: Row[] }>();
 const timers = new Map<string, NodeJS.Timeout>();
+// Réglages courants de chaque bouton, indexés par action.id (remplace la capture figée de ev)
+const settingsByAction = new Map<string, Settings>();
 
 async function fetchRows(url: string, maxAge: number): Promise<Row[]> {
   const saved = cache.get(url);
@@ -118,13 +120,17 @@ function findRow(rows: Row[], id: string, language: string): Row | undefined {
   );
 }
 
-// Applique le titre (ID) et l'image (colonne D, ou icône de base) sur la touche
-async function refreshKey(ev: WillAppearEvent<Settings> | KeyDownEvent<Settings> | DidReceiveSettingsEvent<Settings>, rows?: Row[]) {
-  const s = ev.payload.settings;
+// Applique le titre (ID) et l'image (colonne D, ou icône de base) sur la touche.
+// Reçoit l'action et les réglages explicitement : ne dépend d'aucun événement figé.
+async function refreshKey(
+  action: WillAppearEvent<Settings>["action"],
+  s: Settings,
+  rows?: Row[],
+) {
   if (s.mode !== "cell" && s.id) {
-    await ev.action.setTitle(s.id);
+    await action.setTitle(s.id);
   } else {
-    await ev.action.setTitle(DEFAULT_TITLE);
+    await action.setTitle(DEFAULT_TITLE);
   }
   if (!rows || s.mode === "cell") return;
   const row = findRow(rows, s.id ?? "", s.language ?? "");
@@ -132,13 +138,14 @@ async function refreshKey(ev: WillAppearEvent<Settings> | KeyDownEvent<Settings>
   let dataUrl = imageUrl ? await fetchImageDataUrl(imageUrl) : undefined;
   // Repli : icône de base si pas d'URL image ou téléchargement échoué
   if (!dataUrl) dataUrl = await fetchImageDataUrl(DEFAULT_ICON_URL);
-  if (dataUrl) await ev.action.setImage(dataUrl);
+  if (dataUrl) await action.setImage(dataUrl);
 }
 
 @action({ UUID: "com.luna.sheets-text.copy" })
 class CopyText extends SingletonAction<Settings> {
   override async onWillAppear(ev: WillAppearEvent<Settings>) {
     const s = ev.payload.settings;
+    settingsByAction.set(ev.action.id, s);
     let rows: Row[] | undefined;
     if (s.csvUrl) {
       try {
@@ -147,19 +154,21 @@ class CopyText extends SingletonAction<Settings> {
         streamDeck.logger.error(e instanceof Error ? e.message : String(e));
       }
     }
-    await refreshKey(ev, rows);
-    this.startAutoRefresh(ev);
+    await refreshKey(ev.action, s, rows);
+    this.startAutoRefresh(ev.action.id, ev.action);
   }
 
   override async onWillDisappear(ev: WillDisappearEvent<Settings>) {
     const timer = timers.get(ev.action.id);
     if (timer) clearInterval(timer);
     timers.delete(ev.action.id);
+    settingsByAction.delete(ev.action.id);
   }
 
   // Mise à jour immédiate quand l'ID ou la langue change dans les propriétés
   override async onDidReceiveSettings(ev: DidReceiveSettingsEvent<Settings>) {
     const s = ev.payload.settings;
+    settingsByAction.set(ev.action.id, s);
     let rows: Row[] | undefined;
     if (s.csvUrl) {
       try {
@@ -168,24 +177,29 @@ class CopyText extends SingletonAction<Settings> {
         streamDeck.logger.error(e instanceof Error ? e.message : String(e));
       }
     }
-    await refreshKey(ev, rows);
+    await refreshKey(ev.action, s, rows);
   }
 
-  // Relit le Sheet toutes les minutes (détecte aussi les nouvelles langues)
-  private startAutoRefresh(ev: WillAppearEvent<Settings>) {
-    const existing = timers.get(ev.action.id);
+  // Relit le Sheet toutes les minutes. Le timer lit les réglages courants
+  // dans settingsByAction et vérifie qu'il agit toujours sur le bon bouton.
+  private startAutoRefresh(actionId: string, action: WillAppearEvent<Settings>["action"]) {
+    const existing = timers.get(actionId);
     if (existing) clearInterval(existing);
     const timer = setInterval(async () => {
-      const s = ev.payload.settings;
-      if (!s.csvUrl) return;
+      const s = settingsByAction.get(actionId);
+      if (!s?.csvUrl) return;
       try {
         const rows = await fetchRows(s.csvUrl.trim(), 0);
-        await refreshKey(ev, rows);
+        // Vérification : relire les réglages avant d'écrire, au cas où le bouton
+        // a changé d'ID entre-temps (évite d'écraser l'affichage avec une autre donnée).
+        const current = settingsByAction.get(actionId);
+        if (!current || current.id !== s.id || current.language !== s.language || current.mode !== s.mode) return;
+        await refreshKey(action, current, rows);
       } catch (e) {
         streamDeck.logger.error(e instanceof Error ? e.message : String(e));
       }
     }, AUTO_REFRESH_MS);
-    timers.set(ev.action.id, timer);
+    timers.set(actionId, timer);
   }
 
   override async onSendToPlugin(ev: SendToPluginEvent<JsonValue, Settings>) {
@@ -239,13 +253,14 @@ class CopyText extends SingletonAction<Settings> {
       if (!text) throw new Error("Texte vide");
       await paste(text);
       await ev.action.showOk();
-      await refreshKey(ev, rows);
+      await refreshKey(ev.action, s, rows);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       streamDeck.logger.error(message);
       await ev.action.showAlert();
       await ev.action.setTitle("Erreur");
-      setTimeout(() => { refreshKey(ev).catch(() => {}); }, 3000);
+      const current = settingsByAction.get(ev.action.id) ?? s;
+      setTimeout(() => { refreshKey(ev.action, current).catch(() => {}); }, 3000);
     }
   }
 }
