@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Google Sheets Text</title>
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body { font-family: "Segoe UI", system-ui, sans-serif; font-size: 13px; color: #d8d8d8; padding: 8px 12px; }
+  .row { display: flex; align-items: center; margin: 8px 0; }
+  .row label { width: 150px; flex-shrink: 0; color: #d8d8d8; }
+  .row input, .row select { flex: 1; min-width: 0; background: #2d2d2d; color: #ffffff; border: 1px solid #4a4a4a; border-radius: 3px; padding: 5px 7px; font-size: 13px; }
+  .row input:focus, .row select:focus { outline: 1px solid #1a73e8; border-color: #1a73e8; }
+  .row button { margin-left: 6px; background: #2d2d2d; color: #ffffff; border: 1px solid #4a4a4a; border-radius: 3px; padding: 5px 10px; cursor: pointer; }
+  .row button:hover { background: #3a3a3a; }
+  .note { margin-top: 12px; padding: 8px 10px; background: #262626; border-radius: 4px; color: #b8b8b8; line-height: 1.4; }
+  #status { margin-top: 4px; color: #9aa0a6; font-size: 12px; }
+  #status.err { color: #f28b82; }
+  #status.ok { color: #81c995; }
+  #freshness { margin-left: 8px; font-size: 12px; color: #9aa0a6; white-space: nowrap; }
+  #freshness.err { color: #f28b82; }
+  #freshness.ok { color: #81c995; }
+</style>
+</head>
+<body>
+  <div class="row"><label for="csvUrl">URL CSV publiée</label><input id="csvUrl" type="text" placeholder="https://docs.google.com/spreadsheets/d/.../pub?output=csv"></div>
+  <div class="row"><label for="mode">Mode</label>
+    <select id="mode">
+      <option value="lookup">Choisir dans la liste (langue + ID)</option>
+      <option value="cell">Cellule directe</option>
+    </select>
+  </div>
+  <div class="row" data-mode="lookup"><label for="language">Langue (colonne A)</label><select id="language"></select></div>
+  <div class="row" data-mode="lookup"><label for="search">Rechercher</label><input id="search" type="text" placeholder="Filtrer les ID…"></div>
+  <div class="row" data-mode="lookup"><label for="id">ID (colonne B)</label><select id="id"></select></div>
+  <div class="row" data-mode="cell"><label for="cell">Cellule</label><input id="cell" type="text" placeholder="C2"></div>
+  <div class="row"><label></label><button id="refreshBtn" type="button">Rafraîchir</button><span id="freshness">Jamais mis à jour</span></div>
+  <div class="row"><label></label><div id="status"></div></div>
+  <div class="note">La liste se charge et se met à jour automatiquement (au démarrage, à chaque changement d'URL, puis toutes les 60 secondes). Choisissez la langue (colonne A) : le menu ID n'affiche que les ID de cette langue (colonne B). Utilisez la recherche pour filtrer les ID. Publiez la feuille en CSV (Fichier → Partager → Publier sur le Web).</div>
+
+<script>
+(function () {
+  var FIELDS = ["csvUrl", "mode", "language", "id", "cell"];
+  var DEFAULTS = { mode: "lookup" };
+  var LIST_REFRESH_MS = 60000;
+  var ws = null, uuid = null, settings = {}, options = [], listTimer = null, freshTimer = null, lastUpdate = null;
+
+  function $(id) { return document.getElementById(id); }
+
+  function save() {
+    if (!ws || ws.readyState !== 1) return;
+    FIELDS.forEach(function (f) { settings[f] = $(f).value; });
+    ws.send(JSON.stringify({ event: "setSettings", context: uuid, payload: settings }));
+  }
+
+  function setStatus(text, cls) {
+    var s = $("status");
+    s.textContent = text || "";
+    s.className = cls || "";
+  }
+
+  function setFreshness(text, cls) {
+    var f = $("freshness");
+    f.textContent = text;
+    f.className = cls || "";
+  }
+
+  function tickFreshness() {
+    if (!lastUpdate) return;
+    var sec = Math.floor((Date.now() - lastUpdate) / 1000);
+    var label = sec < 60 ? sec + " s" : Math.floor(sec / 60) + " min";
+    setFreshness("Mis à jour il y a " + label, "ok");
+  }
+
+  function markUpdated() {
+    lastUpdate = Date.now();
+    tickFreshness();
+    if (freshTimer) clearInterval(freshTimer);
+    freshTimer = setInterval(tickFreshness, 1000);
+  }
+
+  function markError(msg) {
+    setFreshness("Erreur", "err");
+    setStatus(msg, "err");
+  }
+
+  // Si filtering est vrai, on ne réinjecte pas la valeur courante hors résultats
+  function fillSelect(sel, values, current, emptyLabel, filtering) {
+    sel.innerHTML = "";
+    var list = values.slice();
+    if (!filtering && current && list.indexOf(current) === -1) list.unshift(current);
+    if (!list.length) {
+      var o = document.createElement("option");
+      o.value = ""; o.textContent = emptyLabel;
+      sel.appendChild(o);
+      return;
+    }
+    list.forEach(function (v) {
+      var o = document.createElement("option");
+      o.value = v; o.textContent = v;
+      sel.appendChild(o);
+    });
+    sel.value = current && list.indexOf(current) !== -1 ? current : list[0];
+  }
+
+  function unique(arr) {
+    return arr.filter(function (v, i) { return v && arr.indexOf(v) === i; });
+  }
+
+  function refreshLanguages() {
+    var langs = unique(options.map(function (o) { return o.language; }));
+    fillSelect($("language"), langs, settings.language, "(aucune langue)", false);
+    refreshIds();
+  }
+
+  // Filtre les ID selon la recherche ; sans réinjection de l'ID courant quand un terme est tapé
+  function refreshIds() {
+    var lang = $("language").value;
+    var term = ($("search").value || "").trim().toLocaleLowerCase();
+    var ids = unique(options
+      .filter(function (o) { return o.language === lang; })
+      .filter(function (o) { return !term || o.id.toLocaleLowerCase().indexOf(term) !== -1; })
+      .map(function (o) { return o.id; }));
+    fillSelect($("id"), ids, settings.id, term ? "(aucun résultat)" : "(aucun ID)", !!term);
+  }
+
+  function updateVisibility() {
+    var mode = $("mode").value;
+    document.querySelectorAll("[data-mode]").forEach(function (row) {
+      row.style.display = row.getAttribute("data-mode") === mode ? "flex" : "none";
+    });
+  }
+
+  function load() {
+    FIELDS.forEach(function (f) {
+      if (f === "language" || f === "id") return;
+      var v = settings[f] !== undefined ? settings[f] : DEFAULTS[f];
+      $(f).value = v === undefined ? "" : v;
+    });
+    refreshLanguages();
+    updateVisibility();
+  }
+
+  function parseCsv(csv) {
+    var rows = [], row = [], field = "", quoted = false;
+    for (var i = 0; i < csv.length; i++) {
+      var ch = csv[i];
+      if (quoted) {
+        if (ch === '"' && csv[i + 1] === '"') { field += '"'; i++; }
+        else if (ch === '"') quoted = false;
+        else field += ch;
+      } else if (ch === '"') quoted = true;
+      else if (ch === ",") { row.push(field); field = ""; }
+      else if (ch === "\n" || ch === "\r") {
+        if (ch === "\r" && csv[i + 1] === "\n") i++;
+        row.push(field); rows.push(row); row = []; field = "";
+      } else field += ch;
+    }
+    if (field || row.length) { row.push(field); rows.push(row); }
+    return rows;
+  }
+
+  // Colonnes : A = langue (0), B = ID (1)
+  function applyRows(rows) {
+    options = rows.slice(1)
+      .filter(function (r) { return (r[1] || "").trim() !== ""; })
+      .map(function (r) { return { language: (r[0] || "").trim(), id: (r[1] || "").trim() }; });
+    refreshLanguages();
+    save();
+    markUpdated();
+    setStatus(options.length + " texte(s)", "ok");
+  }
+
+  function requestList() {
+    var url = $("csvUrl").value.trim();
+    if (!url) { setStatus("Collez d'abord l'URL CSV", "err"); return; }
+    var btn = $("refreshBtn");
+    btn.disabled = true;
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, 12000);
+    fetch(url, { signal: controller.signal, cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("Google Sheets HTTP " + r.status + " (feuille non publiée ?)");
+        return r.text();
+      })
+      .then(function (text) {
+        if (/^\s*<(!doctype|html)/i.test(text)) throw new Error("Ce lien n'est pas un CSV : publiez la feuille en CSV");
+        applyRows(parseCsv(text));
+      })
+      .catch(function (e) {
+        markError(e && e.name === "AbortError" ? "Délai dépassé (12 s)" : (e && e.message ? e.message : "Erreur de chargement"));
+      })
+      .then(function () { clearTimeout(timer); btn.disabled = false; });
+  }
+
+  function startAutoRefresh() {
+    if (listTimer) clearInterval(listTimer);
+    listTimer = setInterval(requestList, LIST_REFRESH_MS);
+  }
+
+  FIELDS.forEach(function (f) {
+    var el = $(f);
+    el.addEventListener("input", function () { if (f !== "language" && f !== "id") save(); });
+    el.addEventListener("change", function () {
+      if (f === "mode") updateVisibility();
+      if (f === "language") { settings.id = ""; refreshIds(); }
+      if (f === "csvUrl") requestList();
+      save();
+    });
+  });
+
+  // Recherche : filtre les ID en direct, sans toucher aux réglages
+  $("search").addEventListener("input", refreshIds);
+  $("refreshBtn").addEventListener("click", requestList);
+
+  load();
+
+  window.connectElgatoStreamDeckSocket = function (port, propertyInspectorUUID, registerEvent, info, actionInfo) {
+    uuid = propertyInspectorUUID;
+    try { settings = (JSON.parse(actionInfo).payload || {}).settings || {}; } catch (e) { settings = {}; }
+    load();
+    ws = new WebSocket("ws://127.0.0.1:" + port);
+    ws.onopen = function () {
+      ws.send(JSON.stringify({ event: registerEvent, uuid: propertyInspectorUUID }));
+      if (settings.csvUrl) requestList();
+      startAutoRefresh();
+    };
+  };
+})();
+</script>
+</body>
+</html>
