@@ -28,14 +28,13 @@
   <div class="row" data-mode="lookup"><label for="language">Langue (colonne A)</label><select id="language"></select></div>
   <div class="row" data-mode="lookup"><label for="id">ID (colonne B)</label><select id="id"></select></div>
   <div class="row" data-mode="cell"><label for="cell">Cellule</label><input id="cell" type="text" placeholder="C2"></div>
-  <div class="row"><label for="refreshSeconds">Actualisation (secondes)</label><input id="refreshSeconds" type="number" min="0" max="3600" placeholder="15"></div>
   <div class="row"><label></label><div id="status"></div></div>
   <div class="note">La liste se charge et se met à jour automatiquement (au démarrage, à chaque changement d'URL, puis toutes les 60 secondes). Choisissez la langue (colonne A) : le menu ID n'affiche que les ID de cette langue (colonne B). Publiez la feuille en CSV (Fichier → Partager → Publier sur le Web).</div>
 
 <script>
 (function () {
-  var FIELDS = ["csvUrl", "mode", "language", "id", "cell", "refreshSeconds"];
-  var DEFAULTS = { mode: "lookup", refreshSeconds: 15 };
+  var FIELDS = ["csvUrl", "mode", "language", "id", "cell"];
+  var DEFAULTS = { mode: "lookup" };
   var LIST_REFRESH_MS = 60000;
   var ws = null, uuid = null, settings = {}, options = [], listTimer = null;
 
@@ -43,10 +42,7 @@
 
   function save() {
     if (!ws || ws.readyState !== 1) return;
-    FIELDS.forEach(function (f) {
-      var el = $(f);
-      settings[f] = f === "refreshSeconds" ? Number(el.value || 15) : el.value;
-    });
+    FIELDS.forEach(function (f) { settings[f] = $(f).value; });
     ws.send(JSON.stringify({ event: "setSettings", context: uuid, payload: settings }));
   }
 

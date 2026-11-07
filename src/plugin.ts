@@ -8,7 +8,6 @@ interface Settings {
   id?: string;
   language?: string;
   cell?: string;
-  refreshSeconds?: number;
 }
 type Row = string[];
 
@@ -22,10 +21,12 @@ const COL_IMAGE = 3;
 const DEFAULT_ICON_URL = "https://github.com/dylandesign13/streamdeck-google-sheets-text/blob/main/Images/icons/Black%20Icon.png?raw=true";
 
 // Rafraîchissement automatique de la touche (ms)
-const AUTO_REFRESH_MS = 60_000;
+const AUTO_REFRESH_MS = 5_000;
 
 const cache = new Map<string, { at: number; rows: Row[] }>();
 const timers = new Map<string, NodeJS.Timeout>();
+// Infos de dernière mise à jour par touche
+const lastUpdate = new Map<string, { count: number; at: Date }>();
 
 async function fetchRows(url: string, maxAge: number): Promise<Row[]> {
   const saved = cache.get(url);
@@ -118,13 +119,26 @@ function findRow(rows: Row[], id: string, language: string): Row | undefined {
   );
 }
 
-// Applique le titre (ID) et l'image (colonne D, ou icône de base) sur la touche
+// Formate l'info de mise à jour : nombre de textes + heure
+function formatUpdate(count: number, at: Date): string {
+  const hh = String(at.getHours()).padStart(2, "0");
+  const mm = String(at.getMinutes()).padStart(2, "0");
+  return `${count} texte(s)\n${hh}:${mm}`;
+}
+
+// Applique le titre (ID + dernière mise à jour) et l'image (colonne D, ou icône de base)
 async function refreshKey(ev: WillAppearEvent<Settings> | KeyDownEvent<Settings> | DidReceiveSettingsEvent<Settings>, rows?: Row[]) {
   const s = ev.payload.settings;
+  if (rows) {
+    const count = rows.slice(1).filter(r => (r[COL_ID] ?? "").trim() !== "").length;
+    lastUpdate.set(ev.action.id, { count, at: new Date() });
+  }
+  const info = lastUpdate.get(ev.action.id);
+  const infoLine = info ? `\n${formatUpdate(info.count, info.at)}` : "";
   if (s.mode !== "cell" && s.id) {
-    await ev.action.setTitle(s.id);
+    await ev.action.setTitle(`${s.id}${infoLine}`);
   } else {
-    await ev.action.setTitle(DEFAULT_TITLE);
+    await ev.action.setTitle(`${DEFAULT_TITLE}${infoLine}`);
   }
   if (!rows || s.mode === "cell") return;
   const row = findRow(rows, s.id ?? "", s.language ?? "");
@@ -142,7 +156,7 @@ class CopyText extends SingletonAction<Settings> {
     let rows: Row[] | undefined;
     if (s.csvUrl) {
       try {
-        rows = await fetchRows(s.csvUrl.trim(), 15000);
+        rows = await fetchRows(s.csvUrl.trim(), 0);
       } catch (e) {
         streamDeck.logger.error(e instanceof Error ? e.message : String(e));
       }
@@ -155,6 +169,7 @@ class CopyText extends SingletonAction<Settings> {
     const timer = timers.get(ev.action.id);
     if (timer) clearInterval(timer);
     timers.delete(ev.action.id);
+    lastUpdate.delete(ev.action.id);
   }
 
   // Mise à jour immédiate quand l'ID ou la langue change dans les propriétés
@@ -171,7 +186,7 @@ class CopyText extends SingletonAction<Settings> {
     await refreshKey(ev, rows);
   }
 
-  // Relit le Sheet toutes les minutes (détecte aussi les nouvelles langues)
+  // Relit le Sheet toutes les 5 secondes (détecte aussi les nouvelles langues)
   private startAutoRefresh(ev: WillAppearEvent<Settings>) {
     const existing = timers.get(ev.action.id);
     if (existing) clearInterval(existing);
@@ -227,8 +242,7 @@ class CopyText extends SingletonAction<Settings> {
     const s = ev.payload.settings;
     try {
       if (!s.csvUrl) throw new Error("Configurez l’URL CSV dans les propriétés");
-      const seconds = Math.max(0, Math.min(3600, Number(s.refreshSeconds ?? 15)));
-      const rows = await fetchRows(s.csvUrl.trim(), seconds * 1000);
+      const rows = await fetchRows(s.csvUrl.trim(), 0);
       let text = "";
       if (s.mode === "cell") text = cellValue(rows, s.cell ?? "");
       else {
