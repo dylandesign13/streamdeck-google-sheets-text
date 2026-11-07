@@ -8,6 +8,7 @@ interface Settings {
   id?: string;
   language?: string;
   cell?: string;
+  refreshSeconds?: number;
 }
 type Row = string[];
 
@@ -21,12 +22,10 @@ const COL_IMAGE = 3;
 const DEFAULT_ICON_URL = "https://github.com/dylandesign13/streamdeck-google-sheets-text/blob/main/Images/icons/Black%20Icon.png?raw=true";
 
 // Rafraîchissement automatique de la touche (ms)
-const AUTO_REFRESH_MS = 5_000;
+const AUTO_REFRESH_MS = 60_000;
 
 const cache = new Map<string, { at: number; rows: Row[] }>();
 const timers = new Map<string, NodeJS.Timeout>();
-// Touches actuellement visibles (évite d'écrire sur une touche disparue)
-const activeKeys = new Set<string>();
 
 async function fetchRows(url: string, maxAge: number): Promise<Row[]> {
   const saved = cache.get(url);
@@ -119,35 +118,31 @@ function findRow(rows: Row[], id: string, language: string): Row | undefined {
   );
 }
 
-// Applique le titre (ID uniquement) et l'image (colonne D, ou icône de base) sur la touche
+// Applique le titre (ID) et l'image (colonne D, ou icône de base) sur la touche
 async function refreshKey(ev: WillAppearEvent<Settings> | KeyDownEvent<Settings> | DidReceiveSettingsEvent<Settings>, rows?: Row[]) {
-  // Ne rien écrire sur une touche qui n'est plus visible
-  if (!activeKeys.has(ev.action.id)) return;
   const s = ev.payload.settings;
-  // Titre forcé : uniquement l'ID sélectionné (jamais de texte fixe ni de titre résiduel)
-  const title = s.mode !== "cell" && s.id ? s.id : DEFAULT_TITLE;
-  streamDeck.logger.info(`Titre écrit sur la touche : "${title}" (id=${s.id ?? ""}, langue=${s.language ?? ""})`);
-  // Titre explicite vide d'abord pour effacer tout titre résiduel, puis valeur finale
-  await ev.action.setTitle("");
-  await ev.action.setTitle(title);
+  if (s.mode !== "cell" && s.id) {
+    await ev.action.setTitle(s.id);
+  } else {
+    await ev.action.setTitle(DEFAULT_TITLE);
+  }
   if (!rows || s.mode === "cell") return;
   const row = findRow(rows, s.id ?? "", s.language ?? "");
   const imageUrl = (row?.[COL_IMAGE] ?? "").trim();
   let dataUrl = imageUrl ? await fetchImageDataUrl(imageUrl) : undefined;
   // Repli : icône de base si pas d'URL image ou téléchargement échoué
   if (!dataUrl) dataUrl = await fetchImageDataUrl(DEFAULT_ICON_URL);
-  if (dataUrl && activeKeys.has(ev.action.id)) await ev.action.setImage(dataUrl);
+  if (dataUrl) await ev.action.setImage(dataUrl);
 }
 
 @action({ UUID: "com.luna.sheets-text.copy" })
 class CopyText extends SingletonAction<Settings> {
   override async onWillAppear(ev: WillAppearEvent<Settings>) {
-    activeKeys.add(ev.action.id);
     const s = ev.payload.settings;
     let rows: Row[] | undefined;
     if (s.csvUrl) {
       try {
-        rows = await fetchRows(s.csvUrl.trim(), 0);
+        rows = await fetchRows(s.csvUrl.trim(), 15000);
       } catch (e) {
         streamDeck.logger.error(e instanceof Error ? e.message : String(e));
       }
@@ -157,8 +152,6 @@ class CopyText extends SingletonAction<Settings> {
   }
 
   override async onWillDisappear(ev: WillDisappearEvent<Settings>) {
-    // Couper tout rafraîchissement en attente pour cette touche
-    activeKeys.delete(ev.action.id);
     const timer = timers.get(ev.action.id);
     if (timer) clearInterval(timer);
     timers.delete(ev.action.id);
@@ -178,12 +171,11 @@ class CopyText extends SingletonAction<Settings> {
     await refreshKey(ev, rows);
   }
 
-  // Relit le Sheet toutes les 5 secondes (détecte aussi les nouvelles langues)
+  // Relit le Sheet toutes les minutes (détecte aussi les nouvelles langues)
   private startAutoRefresh(ev: WillAppearEvent<Settings>) {
     const existing = timers.get(ev.action.id);
     if (existing) clearInterval(existing);
     const timer = setInterval(async () => {
-      if (!activeKeys.has(ev.action.id)) return;
       const s = ev.payload.settings;
       if (!s.csvUrl) return;
       try {
@@ -235,7 +227,8 @@ class CopyText extends SingletonAction<Settings> {
     const s = ev.payload.settings;
     try {
       if (!s.csvUrl) throw new Error("Configurez l’URL CSV dans les propriétés");
-      const rows = await fetchRows(s.csvUrl.trim(), 0);
+      const seconds = Math.max(0, Math.min(3600, Number(s.refreshSeconds ?? 15)));
+      const rows = await fetchRows(s.csvUrl.trim(), seconds * 1000);
       let text = "";
       if (s.mode === "cell") text = cellValue(rows, s.cell ?? "");
       else {
@@ -252,8 +245,7 @@ class CopyText extends SingletonAction<Settings> {
       streamDeck.logger.error(message);
       await ev.action.showAlert();
       await ev.action.setTitle("Erreur");
-      // Ne revient à l'affichage normal que si la touche est toujours visible
-      setTimeout(() => { if (activeKeys.has(ev.action.id)) refreshKey(ev).catch(() => {}); }, 3000);
+      setTimeout(() => { refreshKey(ev).catch(() => {}); }, 3000);
     }
   }
 }
