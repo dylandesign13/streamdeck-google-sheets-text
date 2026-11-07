@@ -18,7 +18,11 @@ const COL_ID = 1;
 const COL_TEXT = 2;
 const COL_IMAGE = 3;
 
+// Intervalle de vérification automatique (60 s)
+const AUTO_REFRESH_MS = 60 * 1000;
+
 const cache = new Map<string, { at: number; rows: Row[] }>();
+const timers = new Map<string, ReturnType<typeof setInterval>>();
 
 async function fetchRows(url: string, maxAge: number): Promise<Row[]> {
   const saved = cache.get(url);
@@ -111,6 +115,29 @@ async function refreshKey(ev: WillAppearEvent<Settings> | KeyDownEvent<Settings>
   }
 }
 
+// Vérification périodique : relit le Sheet et met à jour la touche
+function startAutoRefresh(ev: WillAppearEvent<Settings> | KeyDownEvent<Settings>) {
+  const key = ev.action.id;
+  stopAutoRefresh(key);
+  const timer = setInterval(async () => {
+    const url = ev.payload.settings.csvUrl?.trim();
+    if (!url) return;
+    try {
+      const rows = await fetchRows(url, 0);
+      await refreshKey(ev, rows);
+    } catch (e) {
+      streamDeck.logger.error(`Vérification automatique : ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, AUTO_REFRESH_MS);
+  timers.set(key, timer);
+}
+
+function stopAutoRefresh(key: string) {
+  const timer = timers.get(key);
+  if (timer) clearInterval(timer);
+  timers.delete(key);
+}
+
 @action({ UUID: "com.luna.sheets-text.copy" })
 class CopyText extends SingletonAction<Settings> {
   override async onWillAppear(ev: WillAppearEvent<Settings>) {
@@ -124,6 +151,23 @@ class CopyText extends SingletonAction<Settings> {
       }
     }
     await refreshKey(ev, rows);
+    startAutoRefresh(ev);
+  }
+
+  override async onWillDisappear(ev: WillDisappearEvent<Settings>) {
+    stopAutoRefresh(ev.action.id);
+  }
+
+  // Mise à jour immédiate dès que l'ID ou la langue change dans les propriétés
+  override async onDidReceiveSettings(ev: DidReceiveSettingsEvent<Settings>) {
+    const s = ev.payload.settings;
+    if (!s.csvUrl) return;
+    try {
+      const rows = await fetchRows(s.csvUrl.trim(), 0);
+      await refreshKey(ev, rows);
+    } catch (e) {
+      streamDeck.logger.error(`Mise à jour à la sélection : ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   override async onSendToPlugin(ev: SendToPluginEvent<JsonValue, Settings>) {
