@@ -91,9 +91,16 @@ function paste(text: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const isMac = process.platform === "darwin";
     const command = isMac ? "osascript" : "powershell.exe";
+    // Sous Windows : on force l'UTF-8 en entrée et en sortie de PowerShell
+    // pour que les accents (é, è, à, ç...) ne soient pas mal décodés.
+    const winScript = "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; " +
+      "$OutputEncoding = [System.Text.Encoding]::UTF8; " +
+      "Set-Clipboard -Value ([Console]::In.ReadToEnd()); " +
+      "Add-Type -AssemblyName System.Windows.Forms; " +
+      "[System.Windows.Forms.SendKeys]::SendWait('^v')";
     const args = isMac
       ? ["-e", `set the clipboard to ${JSON.stringify(text)}`, "-e", "tell application \"System Events\" to keystroke \"v\" using {command down}"]
-      : ["-NoProfile", "-NonInteractive", "-Command", "Set-Clipboard -Value ([Console]::In.ReadToEnd()); Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^v')"];
+      : ["-NoProfile", "-NonInteractive", "-Command", winScript];
     const child = execFile(command, args, { windowsHide: true }, (error) => error ? reject(error) : resolve());
     if (!isMac) child.stdin?.end(text, "utf8");
   });
