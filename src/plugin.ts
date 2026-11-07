@@ -124,11 +124,12 @@ async function refreshKey(ev: WillAppearEvent<Settings> | KeyDownEvent<Settings>
   // Ne rien écrire sur une touche qui n'est plus visible
   if (!activeKeys.has(ev.action.id)) return;
   const s = ev.payload.settings;
-  if (s.mode !== "cell" && s.id) {
-    await ev.action.setTitle(s.id);
-  } else {
-    await ev.action.setTitle(DEFAULT_TITLE);
-  }
+  // Titre forcé : uniquement l'ID sélectionné (jamais de texte fixe ni de titre résiduel)
+  const title = s.mode !== "cell" && s.id ? s.id : DEFAULT_TITLE;
+  streamDeck.logger.info(`Titre écrit sur la touche : "${title}" (id=${s.id ?? ""}, langue=${s.language ?? ""})`);
+  // Titre explicite vide d'abord pour effacer tout titre résiduel, puis valeur finale
+  await ev.action.setTitle("");
+  await ev.action.setTitle(title);
   if (!rows || s.mode === "cell") return;
   const row = findRow(rows, s.id ?? "", s.language ?? "");
   const imageUrl = (row?.[COL_IMAGE] ?? "").trim();
