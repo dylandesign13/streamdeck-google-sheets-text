@@ -1,4 +1,4 @@
-import streamDeck, { action, KeyDownEvent, SendToPluginEvent, SingletonAction, WillAppearEvent } from "@elgato/streamdeck";
+import streamDeck, { action, DidReceiveSettingsEvent, KeyDownEvent, SendToPluginEvent, SingletonAction, WillAppearEvent, WillDisappearEvent } from "@elgato/streamdeck";
 import type { JsonValue } from "@elgato/streamdeck";
 import { execFile } from "node:child_process";
 
@@ -18,11 +18,11 @@ const COL_ID = 1;
 const COL_TEXT = 2;
 const COL_IMAGE = 3;
 
-// Intervalle de vérification automatique (60 s)
-const AUTO_REFRESH_MS = 60 * 1000;
+// Rafraîchissement automatique de la touche (ms)
+const AUTO_REFRESH_MS = 60_000;
 
 const cache = new Map<string, { at: number; rows: Row[] }>();
-const timers = new Map<string, ReturnType<typeof setInterval>>();
+const timers = new Map<string, NodeJS.Timeout>();
 
 async function fetchRows(url: string, maxAge: number): Promise<Row[]> {
   const saved = cache.get(url);
@@ -62,6 +62,16 @@ function cellValue(rows: Row[], address: string): string {
   return rows[line]?.[column] ?? "";
 }
 
+// Liste unique des langues présentes en colonne A (détection automatique)
+export function listLanguages(rows: Row[]): string[] {
+  const set = new Set<string>();
+  for (const r of rows.slice(1)) {
+    const lang = (r[COL_LANGUAGE] ?? "").trim();
+    if (lang) set.add(lang);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
 // Télécharge le PNG indiqué (colonne D) et le renvoie en data URL
 async function fetchImageDataUrl(url: string): Promise<string | undefined> {
   try {
@@ -99,7 +109,7 @@ function findRow(rows: Row[], id: string, language: string): Row | undefined {
 }
 
 // Applique le titre (ID) et l'image (colonne D) sur la touche
-async function refreshKey(ev: WillAppearEvent<Settings> | KeyDownEvent<Settings>, rows?: Row[]) {
+async function refreshKey(ev: WillAppearEvent<Settings> | KeyDownEvent<Settings> | DidReceiveSettingsEvent<Settings>, rows?: Row[]) {
   const s = ev.payload.settings;
   if (s.mode !== "cell" && s.id) {
     await ev.action.setTitle(s.id);
@@ -115,29 +125,6 @@ async function refreshKey(ev: WillAppearEvent<Settings> | KeyDownEvent<Settings>
   }
 }
 
-// Vérification périodique : relit le Sheet et met à jour la touche
-function startAutoRefresh(ev: WillAppearEvent<Settings> | KeyDownEvent<Settings>) {
-  const key = ev.action.id;
-  stopAutoRefresh(key);
-  const timer = setInterval(async () => {
-    const url = ev.payload.settings.csvUrl?.trim();
-    if (!url) return;
-    try {
-      const rows = await fetchRows(url, 0);
-      await refreshKey(ev, rows);
-    } catch (e) {
-      streamDeck.logger.error(`Vérification automatique : ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }, AUTO_REFRESH_MS);
-  timers.set(key, timer);
-}
-
-function stopAutoRefresh(key: string) {
-  const timer = timers.get(key);
-  if (timer) clearInterval(timer);
-  timers.delete(key);
-}
-
 @action({ UUID: "com.luna.sheets-text.copy" })
 class CopyText extends SingletonAction<Settings> {
   override async onWillAppear(ev: WillAppearEvent<Settings>) {
@@ -151,29 +138,50 @@ class CopyText extends SingletonAction<Settings> {
       }
     }
     await refreshKey(ev, rows);
-    startAutoRefresh(ev);
+    this.startAutoRefresh(ev);
   }
 
   override async onWillDisappear(ev: WillDisappearEvent<Settings>) {
-    stopAutoRefresh(ev.action.id);
+    const timer = timers.get(ev.action.id);
+    if (timer) clearInterval(timer);
+    timers.delete(ev.action.id);
   }
 
-  // Mise à jour immédiate dès que l'ID ou la langue change dans les propriétés
+  // Mise à jour immédiate quand l'ID ou la langue change dans les propriétés
   override async onDidReceiveSettings(ev: DidReceiveSettingsEvent<Settings>) {
     const s = ev.payload.settings;
-    if (!s.csvUrl) return;
-    try {
-      const rows = await fetchRows(s.csvUrl.trim(), 0);
-      await refreshKey(ev, rows);
-    } catch (e) {
-      streamDeck.logger.error(`Mise à jour à la sélection : ${e instanceof Error ? e.message : String(e)}`);
+    let rows: Row[] | undefined;
+    if (s.csvUrl) {
+      try {
+        rows = await fetchRows(s.csvUrl.trim(), 0);
+      } catch (e) {
+        streamDeck.logger.error(e instanceof Error ? e.message : String(e));
+      }
     }
+    await refreshKey(ev, rows);
+  }
+
+  // Relit le Sheet toutes les minutes (détecte aussi les nouvelles langues)
+  private startAutoRefresh(ev: WillAppearEvent<Settings>) {
+    const existing = timers.get(ev.action.id);
+    if (existing) clearInterval(existing);
+    const timer = setInterval(async () => {
+      const s = ev.payload.settings;
+      if (!s.csvUrl) return;
+      try {
+        const rows = await fetchRows(s.csvUrl.trim(), 0);
+        await refreshKey(ev, rows);
+      } catch (e) {
+        streamDeck.logger.error(e instanceof Error ? e.message : String(e));
+      }
+    }, AUTO_REFRESH_MS);
+    timers.set(ev.action.id, timer);
   }
 
   override async onSendToPlugin(ev: SendToPluginEvent<JsonValue, Settings>) {
-    const payload = ev.payload as { type?: string; csvUrl?: string };
+    const payload = ev.payload as { type?: string; csvUrl?: string; language?: string };
     streamDeck.logger.info(`onSendToPlugin reçu : ${JSON.stringify(payload)}`);
-    if (payload?.type !== "getOptions") return;
+    if (payload?.type !== "getOptions" && payload?.type !== "getLanguages") return;
     const reply = async (data: JsonValue) => {
       try {
         await streamDeck.ui.sendToPropertyInspector(data);
@@ -184,8 +192,14 @@ class CopyText extends SingletonAction<Settings> {
     try {
       if (!payload.csvUrl) throw new Error("URL CSV manquante");
       const rows = await fetchRows(payload.csvUrl.trim(), 0);
+      if (payload.type === "getLanguages") {
+        await reply({ type: "languages", languages: listLanguages(rows) });
+        return;
+      }
+      const wantedLang = (payload.language ?? "").trim().toLocaleLowerCase();
       const options = rows.slice(1)
         .filter(r => (r[COL_ID] ?? "").trim() !== "")
+        .filter(r => !wantedLang || (r[COL_LANGUAGE] ?? "").trim().toLocaleLowerCase() === wantedLang)
         .map(r => ({
           language: (r[COL_LANGUAGE] ?? "").trim(),
           id: (r[COL_ID] ?? "").trim(),
