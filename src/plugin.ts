@@ -18,6 +18,9 @@ const COL_ID = 1;
 const COL_TEXT = 2;
 const COL_IMAGE = 3;
 
+// Icône de base utilisée quand la colonne D est vide ou invalide
+const DEFAULT_ICON_URL = "https://github.com/dylandesign13/streamdeck-google-sheets-text/blob/main/Images/icons/Black%20Icon.png?raw=true";
+
 // Rafraîchissement automatique de la touche (ms)
 const AUTO_REFRESH_MS = 60_000;
 
@@ -72,7 +75,7 @@ export function listLanguages(rows: Row[]): string[] {
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 
-// Télécharge le PNG indiqué (colonne D) et le renvoie en data URL
+// Télécharge une image PNG et la renvoie en data URL
 async function fetchImageDataUrl(url: string): Promise<string | undefined> {
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
@@ -108,7 +111,7 @@ function findRow(rows: Row[], id: string, language: string): Row | undefined {
   );
 }
 
-// Applique le titre (ID) et l'image (colonne D) sur la touche
+// Applique le titre (ID) et l'image (colonne D, ou icône de base) sur la touche
 async function refreshKey(ev: WillAppearEvent<Settings> | KeyDownEvent<Settings> | DidReceiveSettingsEvent<Settings>, rows?: Row[]) {
   const s = ev.payload.settings;
   if (s.mode !== "cell" && s.id) {
@@ -119,10 +122,10 @@ async function refreshKey(ev: WillAppearEvent<Settings> | KeyDownEvent<Settings>
   if (!rows || s.mode === "cell") return;
   const row = findRow(rows, s.id ?? "", s.language ?? "");
   const imageUrl = (row?.[COL_IMAGE] ?? "").trim();
-  if (imageUrl) {
-    const dataUrl = await fetchImageDataUrl(imageUrl);
-    if (dataUrl) await ev.action.setImage(dataUrl);
-  }
+  let dataUrl = imageUrl ? await fetchImageDataUrl(imageUrl) : undefined;
+  // Repli : icône de base si pas d'URL image ou téléchargement échoué
+  if (!dataUrl) dataUrl = await fetchImageDataUrl(DEFAULT_ICON_URL);
+  if (dataUrl) await ev.action.setImage(dataUrl);
 }
 
 @action({ UUID: "com.luna.sheets-text.copy" })
