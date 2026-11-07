@@ -25,8 +25,6 @@ const AUTO_REFRESH_MS = 5_000;
 
 const cache = new Map<string, { at: number; rows: Row[] }>();
 const timers = new Map<string, NodeJS.Timeout>();
-// Infos de dernière mise à jour par touche
-const lastUpdate = new Map<string, { count: number; at: Date }>();
 
 async function fetchRows(url: string, maxAge: number): Promise<Row[]> {
   const saved = cache.get(url);
@@ -119,26 +117,13 @@ function findRow(rows: Row[], id: string, language: string): Row | undefined {
   );
 }
 
-// Formate l'info de mise à jour : nombre de textes + heure
-function formatUpdate(count: number, at: Date): string {
-  const hh = String(at.getHours()).padStart(2, "0");
-  const mm = String(at.getMinutes()).padStart(2, "0");
-  return `${count} texte(s)\n${hh}:${mm}`;
-}
-
-// Applique le titre (ID + dernière mise à jour) et l'image (colonne D, ou icône de base)
+// Applique le titre (ID uniquement) et l'image (colonne D, ou icône de base) sur la touche
 async function refreshKey(ev: WillAppearEvent<Settings> | KeyDownEvent<Settings> | DidReceiveSettingsEvent<Settings>, rows?: Row[]) {
   const s = ev.payload.settings;
-  if (rows) {
-    const count = rows.slice(1).filter(r => (r[COL_ID] ?? "").trim() !== "").length;
-    lastUpdate.set(ev.action.id, { count, at: new Date() });
-  }
-  const info = lastUpdate.get(ev.action.id);
-  const infoLine = info ? `\n${formatUpdate(info.count, info.at)}` : "";
   if (s.mode !== "cell" && s.id) {
-    await ev.action.setTitle(`${s.id}${infoLine}`);
+    await ev.action.setTitle(s.id);
   } else {
-    await ev.action.setTitle(`${DEFAULT_TITLE}${infoLine}`);
+    await ev.action.setTitle(DEFAULT_TITLE);
   }
   if (!rows || s.mode === "cell") return;
   const row = findRow(rows, s.id ?? "", s.language ?? "");
@@ -169,7 +154,6 @@ class CopyText extends SingletonAction<Settings> {
     const timer = timers.get(ev.action.id);
     if (timer) clearInterval(timer);
     timers.delete(ev.action.id);
-    lastUpdate.delete(ev.action.id);
   }
 
   // Mise à jour immédiate quand l'ID ou la langue change dans les propriétés
