@@ -12,6 +12,11 @@ interface Settings {
 }
 type Row = string[];
 
+// Colonnes : A = langue, B = ID, C = texte
+const COL_LANGUAGE = 0;
+const COL_ID = 1;
+const COL_TEXT = 2;
+
 const cache = new Map<string, { at: number; rows: Row[] }>();
 
 async function fetchRows(url: string, maxAge: number): Promise<Row[]> {
@@ -73,7 +78,6 @@ class CopyText extends SingletonAction<Settings> {
     await ev.action.setTitle(s.mode !== "cell" && s.id ? `${s.id}\n${s.language ?? ""}` : DEFAULT_TITLE);
   }
 
-  // Le panneau de configuration demande la liste des ID / langues de la feuille
   override async onSendToPlugin(ev: SendToPluginEvent<JsonValue, Settings>) {
     const payload = ev.payload as { type?: string; csvUrl?: string };
     streamDeck.logger.info(`onSendToPlugin reçu : ${JSON.stringify(payload)}`);
@@ -88,9 +92,14 @@ class CopyText extends SingletonAction<Settings> {
     try {
       if (!payload.csvUrl) throw new Error("URL CSV manquante");
       const rows = await fetchRows(payload.csvUrl.trim(), 0);
+      // Renvoie chaque ligne avec langue (A), ID (B) et aperçu du texte (C)
       const options = rows.slice(1)
-        .filter(r => (r[0] ?? "").trim() !== "")
-        .map(r => ({ id: (r[0] ?? "").trim(), language: (r[1] ?? "").trim(), preview: (r[2] ?? "").slice(0, 60) }));
+        .filter(r => (r[COL_ID] ?? "").trim() !== "")
+        .map(r => ({
+          language: (r[COL_LANGUAGE] ?? "").trim(),
+          id: (r[COL_ID] ?? "").trim(),
+          preview: (r[COL_TEXT] ?? "").slice(0, 60),
+        }));
       await reply({ type: "options", options });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -110,9 +119,12 @@ class CopyText extends SingletonAction<Settings> {
       else {
         const id = (s.id ?? "").trim().toLocaleLowerCase();
         const language = (s.language ?? "").trim().toLocaleLowerCase();
-        const row = rows.slice(1).find(r => (r[0] ?? "").trim().toLocaleLowerCase() === id && (r[1] ?? "").trim().toLocaleLowerCase() === language);
+        const row = rows.slice(1).find(r =>
+          (r[COL_ID] ?? "").trim().toLocaleLowerCase() === id &&
+          (r[COL_LANGUAGE] ?? "").trim().toLocaleLowerCase() === language
+        );
         if (!row) throw new Error(`Introuvable : ${s.id ?? "ID"} / ${s.language ?? "langue"}`);
-        text = row[2] ?? "";
+        text = row[COL_TEXT] ?? "";
       }
       if (!text) throw new Error("Texte vide");
       await paste(text);

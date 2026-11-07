@@ -24,21 +24,21 @@
   <div class="row"><label></label><button id="refresh" type="button">Charger / actualiser la liste</button><span id="status"></span></div>
   <div class="row"><label for="mode">Mode</label>
     <select id="mode">
-      <option value="lookup">Choisir dans la liste (ID + langue)</option>
+      <option value="lookup">Choisir dans la liste (langue + ID)</option>
       <option value="cell">Cellule directe</option>
     </select>
   </div>
-  <div class="row" data-mode="lookup"><label for="id">ID (colonne A)</label><select id="id"></select></div>
-  <div class="row" data-mode="lookup"><label for="language">Langue (colonne B)</label><select id="language"></select></div>
+  <div class="row" data-mode="lookup"><label for="language">Langue (colonne A)</label><select id="language"></select></div>
+  <div class="row" data-mode="lookup"><label for="id">ID (colonne B)</label><select id="id"></select></div>
   <div class="row" data-mode="cell"><label for="cell">Cellule</label><input id="cell" type="text" placeholder="C2"></div>
   <div class="row"><label for="refreshSeconds">Actualisation (secondes)</label><input id="refreshSeconds" type="number" min="0" max="3600" placeholder="15"></div>
-  <div class="note">Le texte est copié puis collé dans la fenêtre active. Les menus ID et Langue se remplissent depuis votre feuille : cliquez sur « Charger / actualiser la liste » après avoir collé l’URL. Publiez la feuille en CSV (Fichier → Partager → Publier sur le Web) ; toute personne disposant de l’URL peut lire son contenu.</div>
+  <div class="note">Le texte est copié puis collé dans la fenêtre active. Choisissez d’abord la langue (colonne A) : le menu ID n’affiche que les ID disponibles pour cette langue (colonne B). Cliquez sur « Charger / actualiser la liste » après avoir collé l’URL. Publiez la feuille en CSV (Fichier → Partager → Publier sur le Web) ; toute personne disposant de l’URL peut lire son contenu.</div>
 
 <script>
 (function () {
-  var FIELDS = ["csvUrl", "mode", "id", "language", "cell", "refreshSeconds"];
+  var FIELDS = ["csvUrl", "mode", "language", "id", "cell", "refreshSeconds"];
   var DEFAULTS = { mode: "lookup", refreshSeconds: 15 };
-  var ws = null, uuid = null, settings = {}, options = [], loadTimer = null;
+  var ws = null, uuid = null, settings = {}, options = [];
 
   function $(id) { return document.getElementById(id); }
 
@@ -79,16 +79,18 @@
     return arr.filter(function (v, i) { return v && arr.indexOf(v) === i; });
   }
 
-  function refreshIds() {
-    var ids = unique(options.map(function (o) { return o.id; }));
-    fillSelect($("id"), ids, settings.id, "(cliquez sur Charger)");
-    refreshLanguages();
+  // 1. Le menu Langue (colonne A) est rempli en premier
+  function refreshLanguages() {
+    var langs = unique(options.map(function (o) { return o.language; }));
+    fillSelect($("language"), langs, settings.language, "(aucune langue)");
+    refreshIds();
   }
 
-  function refreshLanguages() {
-    var id = $("id").value;
-    var langs = unique(options.filter(function (o) { return o.id === id; }).map(function (o) { return o.language; }));
-    fillSelect($("language"), langs, settings.language, "(aucune langue)");
+  // 2. Le menu ID (colonne B) ne montre que les ID de la langue choisie
+  function refreshIds() {
+    var lang = $("language").value;
+    var ids = unique(options.filter(function (o) { return o.language === lang; }).map(function (o) { return o.id; }));
+    fillSelect($("id"), ids, settings.id, "(aucun ID)");
   }
 
   function updateVisibility() {
@@ -100,15 +102,14 @@
 
   function load() {
     FIELDS.forEach(function (f) {
-      if (f === "id" || f === "language") return;
+      if (f === "language" || f === "id") return;
       var v = settings[f] !== undefined ? settings[f] : DEFAULTS[f];
       $(f).value = v === undefined ? "" : v;
     });
-    refreshIds();
+    refreshLanguages();
     updateVisibility();
   }
 
-  // Charge la feuille directement depuis le panneau (aucun aller-retour avec le plugin)
   function parseCsv(csv) {
     var rows = [], row = [], field = "", quoted = false;
     for (var i = 0; i < csv.length; i++) {
@@ -128,12 +129,12 @@
     return rows;
   }
 
+  // Colonnes : A = langue (0), B = ID (1)
   function applyRows(rows) {
     options = rows.slice(1)
-      .filter(function (r) { return (r[0] || "").trim() !== ""; })
-      .map(function (r) { return { id: (r[0] || "").trim(), language: (r[1] || "").trim() }; });
-    settings.id = $("id").value || settings.id;
-    refreshIds();
+      .filter(function (r) { return (r[1] || "").trim() !== ""; })
+      .map(function (r) { return { language: (r[0] || "").trim(), id: (r[1] || "").trim() }; });
+    refreshLanguages();
     save();
     setStatus(options.length + " texte(s) chargé(s)", "ok");
   }
@@ -161,10 +162,10 @@
 
   FIELDS.forEach(function (f) {
     var el = $(f);
-    el.addEventListener("input", function () { if (f !== "id" && f !== "language") save(); });
+    el.addEventListener("input", function () { if (f !== "language" && f !== "id") save(); });
     el.addEventListener("change", function () {
       if (f === "mode") updateVisibility();
-      if (f === "id") { settings.language = ""; refreshLanguages(); }
+      if (f === "language") { settings.id = ""; refreshIds(); }
       save();
     });
   });
