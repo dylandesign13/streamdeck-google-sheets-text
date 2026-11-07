@@ -11,17 +11,14 @@
   .row label { width: 150px; flex-shrink: 0; color: #d8d8d8; }
   .row input, .row select { flex: 1; min-width: 0; background: #2d2d2d; color: #ffffff; border: 1px solid #4a4a4a; border-radius: 3px; padding: 5px 7px; font-size: 13px; }
   .row input:focus, .row select:focus { outline: 1px solid #1a73e8; border-color: #1a73e8; }
-  .row button { background: #1a73e8; color: #fff; border: 0; border-radius: 3px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
-  .row button:hover { background: #1b66c9; }
   .note { margin-top: 12px; padding: 8px 10px; background: #262626; border-radius: 4px; color: #b8b8b8; line-height: 1.4; }
-  #status { margin-left: 10px; color: #9aa0a6; }
+  #status { margin-top: 4px; color: #9aa0a6; font-size: 12px; }
   #status.err { color: #f28b82; }
   #status.ok { color: #81c995; }
 </style>
 </head>
 <body>
   <div class="row"><label for="csvUrl">URL CSV publiée</label><input id="csvUrl" type="text" placeholder="https://docs.google.com/spreadsheets/d/.../pub?output=csv"></div>
-  <div class="row"><label></label><button id="refresh" type="button">Charger / actualiser la liste</button><span id="status"></span></div>
   <div class="row"><label for="mode">Mode</label>
     <select id="mode">
       <option value="lookup">Choisir dans la liste (langue + ID)</option>
@@ -32,13 +29,15 @@
   <div class="row" data-mode="lookup"><label for="id">ID (colonne B)</label><select id="id"></select></div>
   <div class="row" data-mode="cell"><label for="cell">Cellule</label><input id="cell" type="text" placeholder="C2"></div>
   <div class="row"><label for="refreshSeconds">Actualisation (secondes)</label><input id="refreshSeconds" type="number" min="0" max="3600" placeholder="15"></div>
-  <div class="note">Le texte est copié puis collé dans la fenêtre active. Choisissez d’abord la langue (colonne A) : le menu ID n’affiche que les ID disponibles pour cette langue (colonne B). Cliquez sur « Charger / actualiser la liste » après avoir collé l’URL. Publiez la feuille en CSV (Fichier → Partager → Publier sur le Web) ; toute personne disposant de l’URL peut lire son contenu.</div>
+  <div class="row"><label></label><div id="status"></div></div>
+  <div class="note">La liste se charge et se met à jour automatiquement (au démarrage, à chaque changement d'URL, puis toutes les 60 secondes). Choisissez la langue (colonne A) : le menu ID n'affiche que les ID de cette langue (colonne B). Publiez la feuille en CSV (Fichier → Partager → Publier sur le Web).</div>
 
 <script>
 (function () {
   var FIELDS = ["csvUrl", "mode", "language", "id", "cell", "refreshSeconds"];
   var DEFAULTS = { mode: "lookup", refreshSeconds: 15 };
-  var ws = null, uuid = null, settings = {}, options = [];
+  var LIST_REFRESH_MS = 60000;
+  var ws = null, uuid = null, settings = {}, options = [], listTimer = null;
 
   function $(id) { return document.getElementById(id); }
 
@@ -79,14 +78,12 @@
     return arr.filter(function (v, i) { return v && arr.indexOf(v) === i; });
   }
 
-  // 1. Le menu Langue (colonne A) est rempli en premier
   function refreshLanguages() {
     var langs = unique(options.map(function (o) { return o.language; }));
     fillSelect($("language"), langs, settings.language, "(aucune langue)");
     refreshIds();
   }
 
-  // 2. Le menu ID (colonne B) ne montre que les ID de la langue choisie
   function refreshIds() {
     var lang = $("language").value;
     var ids = unique(options.filter(function (o) { return o.language === lang; }).map(function (o) { return o.id; }));
@@ -136,22 +133,22 @@
       .map(function (r) { return { language: (r[0] || "").trim(), id: (r[1] || "").trim() }; });
     refreshLanguages();
     save();
-    setStatus(options.length + " texte(s) chargé(s)", "ok");
+    var t = new Date().toLocaleTimeString("fr-FR");
+    setStatus(options.length + " texte(s) — mis à jour à " + t, "ok");
   }
 
   function requestList() {
     var url = $("csvUrl").value.trim();
-    if (!url) { setStatus("Collez d’abord l’URL CSV", "err"); return; }
-    setStatus("Chargement…");
+    if (!url) { setStatus("Collez d'abord l'URL CSV", "err"); return; }
     var controller = new AbortController();
     var timer = setTimeout(function () { controller.abort(); }, 12000);
-    fetch(url, { signal: controller.signal })
+    fetch(url, { signal: controller.signal, cache: "no-store" })
       .then(function (r) {
         if (!r.ok) throw new Error("Google Sheets HTTP " + r.status + " (feuille non publiée ?)");
         return r.text();
       })
       .then(function (text) {
-        if (/^\s*<(!doctype|html)/i.test(text)) throw new Error("Ce lien n’est pas un CSV : publiez la feuille en CSV");
+        if (/^\s*<(!doctype|html)/i.test(text)) throw new Error("Ce lien n'est pas un CSV : publiez la feuille en CSV");
         applyRows(parseCsv(text));
       })
       .catch(function (e) {
@@ -160,16 +157,21 @@
       .then(function () { clearTimeout(timer); });
   }
 
+  function startAutoRefresh() {
+    if (listTimer) clearInterval(listTimer);
+    listTimer = setInterval(requestList, LIST_REFRESH_MS);
+  }
+
   FIELDS.forEach(function (f) {
     var el = $(f);
     el.addEventListener("input", function () { if (f !== "language" && f !== "id") save(); });
     el.addEventListener("change", function () {
       if (f === "mode") updateVisibility();
       if (f === "language") { settings.id = ""; refreshIds(); }
+      if (f === "csvUrl") requestList();
       save();
     });
   });
-  $("refresh").addEventListener("click", requestList);
 
   load();
 
@@ -181,6 +183,7 @@
     ws.onopen = function () {
       ws.send(JSON.stringify({ event: registerEvent, uuid: propertyInspectorUUID }));
       if (settings.csvUrl) requestList();
+      startAutoRefresh();
     };
   };
 })();
