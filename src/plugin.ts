@@ -25,6 +25,8 @@ const AUTO_REFRESH_MS = 5_000;
 
 const cache = new Map<string, { at: number; rows: Row[] }>();
 const timers = new Map<string, NodeJS.Timeout>();
+// Touches actuellement visibles (évite d'écrire sur une touche disparue)
+const activeKeys = new Set<string>();
 
 async function fetchRows(url: string, maxAge: number): Promise<Row[]> {
   const saved = cache.get(url);
@@ -119,6 +121,8 @@ function findRow(rows: Row[], id: string, language: string): Row | undefined {
 
 // Applique le titre (ID uniquement) et l'image (colonne D, ou icône de base) sur la touche
 async function refreshKey(ev: WillAppearEvent<Settings> | KeyDownEvent<Settings> | DidReceiveSettingsEvent<Settings>, rows?: Row[]) {
+  // Ne rien écrire sur une touche qui n'est plus visible
+  if (!activeKeys.has(ev.action.id)) return;
   const s = ev.payload.settings;
   if (s.mode !== "cell" && s.id) {
     await ev.action.setTitle(s.id);
@@ -131,12 +135,13 @@ async function refreshKey(ev: WillAppearEvent<Settings> | KeyDownEvent<Settings>
   let dataUrl = imageUrl ? await fetchImageDataUrl(imageUrl) : undefined;
   // Repli : icône de base si pas d'URL image ou téléchargement échoué
   if (!dataUrl) dataUrl = await fetchImageDataUrl(DEFAULT_ICON_URL);
-  if (dataUrl) await ev.action.setImage(dataUrl);
+  if (dataUrl && activeKeys.has(ev.action.id)) await ev.action.setImage(dataUrl);
 }
 
 @action({ UUID: "com.luna.sheets-text.copy" })
 class CopyText extends SingletonAction<Settings> {
   override async onWillAppear(ev: WillAppearEvent<Settings>) {
+    activeKeys.add(ev.action.id);
     const s = ev.payload.settings;
     let rows: Row[] | undefined;
     if (s.csvUrl) {
@@ -151,6 +156,8 @@ class CopyText extends SingletonAction<Settings> {
   }
 
   override async onWillDisappear(ev: WillDisappearEvent<Settings>) {
+    // Couper tout rafraîchissement en attente pour cette touche
+    activeKeys.delete(ev.action.id);
     const timer = timers.get(ev.action.id);
     if (timer) clearInterval(timer);
     timers.delete(ev.action.id);
@@ -175,6 +182,7 @@ class CopyText extends SingletonAction<Settings> {
     const existing = timers.get(ev.action.id);
     if (existing) clearInterval(existing);
     const timer = setInterval(async () => {
+      if (!activeKeys.has(ev.action.id)) return;
       const s = ev.payload.settings;
       if (!s.csvUrl) return;
       try {
@@ -243,7 +251,8 @@ class CopyText extends SingletonAction<Settings> {
       streamDeck.logger.error(message);
       await ev.action.showAlert();
       await ev.action.setTitle("Erreur");
-      setTimeout(() => { refreshKey(ev).catch(() => {}); }, 3000);
+      // Ne revient à l'affichage normal que si la touche est toujours visible
+      setTimeout(() => { if (activeKeys.has(ev.action.id)) refreshKey(ev).catch(() => {}); }, 3000);
     }
   }
 }
