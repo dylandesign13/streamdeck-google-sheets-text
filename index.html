@@ -14,6 +14,8 @@
   .row button { margin-left: 6px; background: #2d2d2d; color: #ffffff; border: 1px solid #4a4a4a; border-radius: 3px; padding: 5px 10px; cursor: pointer; }
   .row button:hover { background: #3a3a3a; }
   .note { margin-top: 12px; padding: 8px 10px; background: #262626; border-radius: 4px; color: #b8b8b8; line-height: 1.4; }
+  #preview { white-space: pre-wrap; color: #ffffff; min-height: 40px; }
+  #preview.empty { color: #9aa0a6; font-style: italic; }
   #status { margin-top: 4px; color: #9aa0a6; font-size: 12px; }
   #status.err { color: #f28b82; }
   #status.ok { color: #81c995; }
@@ -33,6 +35,8 @@
   <div class="row" data-mode="lookup"><label for="language">Langue (colonne A)</label><select id="language"></select></div>
   <div class="row" data-mode="lookup"><label for="search">Rechercher</label><input id="search" type="text" placeholder="Filtrer les ID…"></div>
   <div class="row" data-mode="lookup"><label for="id">ID (colonne B)</label><select id="id"></select></div>
+  <div class="row" data-mode="lookup"><label>Aperçu du texte</label></div>
+  <div class="note" data-mode="lookup" id="preview"></div>
   <div class="row" data-mode="cell"><label for="cell">Cellule</label><input id="cell" type="text" placeholder="C2"></div>
   <div class="row"><label></label><button id="refreshBtn" type="button">Rafraîchir</button><span id="freshness">Jamais mis à jour</span></div>
   <div class="row"><label></label><div id="status"></div></div>
@@ -122,6 +126,22 @@
       .filter(function (o) { return !term || o.id.toLocaleLowerCase().indexOf(term) !== -1; })
       .map(function (o) { return o.id; }));
     fillSelect($("id"), ids, settings.id, term ? "(aucun résultat)" : "(aucun ID)", !!term);
+    refreshPreview();
+  }
+
+  // Affiche le texte complet (colonne C) de l'ID sélectionné
+  function refreshPreview() {
+    var lang = $("language").value;
+    var id = $("id").value;
+    var p = $("preview");
+    var match = options.filter(function (o) { return o.language === lang && o.id === id; })[0];
+    if (!match || !match.text) {
+      p.textContent = "(aucun texte)";
+      p.className = "note empty";
+      return;
+    }
+    p.textContent = match.text;
+    p.className = "note";
   }
 
   function updateVisibility() {
@@ -160,11 +180,17 @@
     return rows;
   }
 
-  // Colonnes : A = langue (0), B = ID (1)
+  // Colonnes : A = langue (0), B = ID (1), C = texte (2)
   function applyRows(rows) {
     options = rows.slice(1)
       .filter(function (r) { return (r[1] || "").trim() !== ""; })
-      .map(function (r) { return { language: (r[0] || "").trim(), id: (r[1] || "").trim() }; });
+      .map(function (r) {
+        return {
+          language: (r[0] || "").trim(),
+          id: (r[1] || "").trim(),
+          text: r[2] || ""
+        };
+      });
     refreshLanguages();
     save();
     markUpdated();
@@ -204,6 +230,7 @@
     el.addEventListener("change", function () {
       if (f === "mode") updateVisibility();
       if (f === "language") { settings.id = ""; refreshIds(); }
+      if (f === "id") refreshPreview();
       if (f === "csvUrl") requestList();
       save();
     });
