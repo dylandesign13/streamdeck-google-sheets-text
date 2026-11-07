@@ -12,10 +12,11 @@ interface Settings {
 }
 type Row = string[];
 
-// Colonnes : A = langue, B = ID, C = texte
+// Colonnes : A = langue, B = ID, C = texte, D = URL image PNG
 const COL_LANGUAGE = 0;
 const COL_ID = 1;
 const COL_TEXT = 2;
+const COL_IMAGE = 3;
 
 const cache = new Map<string, { at: number; rows: Row[] }>();
 
@@ -57,6 +58,18 @@ function cellValue(rows: Row[], address: string): string {
   return rows[line]?.[column] ?? "";
 }
 
+// Télécharge le PNG indiqué (colonne D) et le renvoie en data URL
+async function fetchImageDataUrl(url: string): Promise<string | undefined> {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!response.ok) return undefined;
+    const base64 = Buffer.from(await response.arrayBuffer()).toString("base64");
+    return `data:image/png;base64,${base64}`;
+  } catch {
+    return undefined;
+  }
+}
+
 function paste(text: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const isMac = process.platform === "darwin";
@@ -71,11 +84,46 @@ function paste(text: string): Promise<void> {
 
 const DEFAULT_TITLE = "Sheets\nTexte";
 
+// Trouve la ligne correspondant à l'ID (et la langue si renseignée)
+function findRow(rows: Row[], id: string, language: string): Row | undefined {
+  const wantedId = id.trim().toLocaleLowerCase();
+  const wantedLang = language.trim().toLocaleLowerCase();
+  return rows.slice(1).find(r =>
+    (r[COL_ID] ?? "").trim().toLocaleLowerCase() === wantedId &&
+    (r[COL_LANGUAGE] ?? "").trim().toLocaleLowerCase() === wantedLang
+  );
+}
+
+// Applique le titre (ID) et l'image (colonne D) sur la touche
+async function refreshKey(ev: WillAppearEvent<Settings> | KeyDownEvent<Settings>, rows?: Row[]) {
+  const s = ev.payload.settings;
+  if (s.mode !== "cell" && s.id) {
+    await ev.action.setTitle(s.id);
+  } else {
+    await ev.action.setTitle(DEFAULT_TITLE);
+  }
+  if (!rows || s.mode === "cell") return;
+  const row = findRow(rows, s.id ?? "", s.language ?? "");
+  const imageUrl = (row?.[COL_IMAGE] ?? "").trim();
+  if (imageUrl) {
+    const dataUrl = await fetchImageDataUrl(imageUrl);
+    if (dataUrl) await ev.action.setImage(dataUrl);
+  }
+}
+
 @action({ UUID: "com.luna.sheets-text.copy" })
 class CopyText extends SingletonAction<Settings> {
   override async onWillAppear(ev: WillAppearEvent<Settings>) {
     const s = ev.payload.settings;
-    await ev.action.setTitle(s.mode !== "cell" && s.id ? `${s.id}\n${s.language ?? ""}` : DEFAULT_TITLE);
+    let rows: Row[] | undefined;
+    if (s.csvUrl) {
+      try {
+        rows = await fetchRows(s.csvUrl.trim(), 15000);
+      } catch (e) {
+        streamDeck.logger.error(e instanceof Error ? e.message : String(e));
+      }
+    }
+    await refreshKey(ev, rows);
   }
 
   override async onSendToPlugin(ev: SendToPluginEvent<JsonValue, Settings>) {
@@ -92,7 +140,6 @@ class CopyText extends SingletonAction<Settings> {
     try {
       if (!payload.csvUrl) throw new Error("URL CSV manquante");
       const rows = await fetchRows(payload.csvUrl.trim(), 0);
-      // Renvoie chaque ligne avec langue (A), ID (B) et aperçu du texte (C)
       const options = rows.slice(1)
         .filter(r => (r[COL_ID] ?? "").trim() !== "")
         .map(r => ({
@@ -117,24 +164,20 @@ class CopyText extends SingletonAction<Settings> {
       let text = "";
       if (s.mode === "cell") text = cellValue(rows, s.cell ?? "");
       else {
-        const id = (s.id ?? "").trim().toLocaleLowerCase();
-        const language = (s.language ?? "").trim().toLocaleLowerCase();
-        const row = rows.slice(1).find(r =>
-          (r[COL_ID] ?? "").trim().toLocaleLowerCase() === id &&
-          (r[COL_LANGUAGE] ?? "").trim().toLocaleLowerCase() === language
-        );
+        const row = findRow(rows, s.id ?? "", s.language ?? "");
         if (!row) throw new Error(`Introuvable : ${s.id ?? "ID"} / ${s.language ?? "langue"}`);
         text = row[COL_TEXT] ?? "";
       }
       if (!text) throw new Error("Texte vide");
       await paste(text);
       await ev.action.showOk();
+      await refreshKey(ev, rows);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       streamDeck.logger.error(message);
       await ev.action.showAlert();
       await ev.action.setTitle("Erreur");
-      setTimeout(() => { ev.action.setTitle(DEFAULT_TITLE).catch(() => {}); }, 3000);
+      setTimeout(() => { refreshKey(ev).catch(() => {}); }, 3000);
     }
   }
 }
