@@ -68,10 +68,11 @@ function cellValue(rows: Row[], address: string): string {
   return rows[line]?.[column] ?? "";
 }
 
-// Une ligne est active si la colonne F vaut ON (casse et espaces ignorés).
-// Une cellule vide, OFF, ou toute autre valeur masque la ligne.
+// Une ligne est active si la colonne F vaut ON, TRUE ou 1 (casse et espaces ignorés).
+// Les cases à cocher Google Sheets exportent TRUE/FALSE ; une cellule vide ou OFF masque la ligne.
 function isEnabled(row: Row): boolean {
-  return (row[COL_ENABLED] ?? "").trim().toLocaleUpperCase() === "ON";
+  const value = (row[COL_ENABLED] ?? "").trim().toLocaleUpperCase();
+  return value === "ON" || value === "TRUE" || value === "1";
 }
 
 // Liste unique des langues ayant au moins une ligne ON (détection automatique)
