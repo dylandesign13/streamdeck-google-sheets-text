@@ -12,11 +12,12 @@ interface Settings {
 }
 type Row = string[];
 
-// Colonnes : A = langue, B = ID, C = texte, D = URL image PNG
+// Colonnes : A = langue, B = ID, C = texte, D = URL image PNG, F = ON/OFF
 const COL_LANGUAGE = 0;
 const COL_ID = 1;
 const COL_TEXT = 2;
 const COL_IMAGE = 3;
+const COL_ENABLED = 5;
 
 // Icône de base utilisée quand la colonne D est vide ou invalide
 const DEFAULT_ICON_URL = "https://github.com/dylandesign13/streamdeck-google-sheets-text/blob/main/Images/icons/Black%20Icon.png?raw=true";
@@ -26,7 +27,7 @@ const AUTO_REFRESH_MS = 60_000;
 
 const cache = new Map<string, { at: number; rows: Row[] }>();
 const timers = new Map<string, NodeJS.Timeout>();
-// Réglages courants de chaque bouton, indexés par action.id (remplace la capture figée de ev)
+// Réglages courants de chaque bouton, indexés par action.id
 const settingsByAction = new Map<string, Settings>();
 
 async function fetchRows(url: string, maxAge: number): Promise<Row[]> {
@@ -67,10 +68,18 @@ function cellValue(rows: Row[], address: string): string {
   return rows[line]?.[column] ?? "";
 }
 
-// Liste unique des langues présentes en colonne A (détection automatique)
+// Une ligne est active si la colonne F vaut ON, TRUE ou 1 (casse et espaces ignorés).
+// Les cases à cocher Google Sheets exportent TRUE/FALSE ; une cellule vide ou OFF masque la ligne.
+function isEnabled(row: Row): boolean {
+  const value = (row[COL_ENABLED] ?? "").trim().toLocaleUpperCase();
+  return value === "ON" || value === "TRUE" || value === "1";
+}
+
+// Liste unique des langues ayant au moins une ligne ON (détection automatique)
 export function listLanguages(rows: Row[]): string[] {
   const set = new Set<string>();
   for (const r of rows.slice(1)) {
+    if (!isEnabled(r)) continue;
     const lang = (r[COL_LANGUAGE] ?? "").trim();
     if (lang) set.add(lang);
   }
@@ -110,24 +119,41 @@ function paste(text: string): Promise<void> {
 
 const DEFAULT_TITLE = "Sheets\nTexte";
 
-// Trouve la ligne correspondant à l'ID (et la langue si renseignée)
+// Trouve la ligne correspondant à l'ID et la langue (lignes ON uniquement)
 function findRow(rows: Row[], id: string, language: string): Row | undefined {
   const wantedId = id.trim().toLocaleLowerCase();
   const wantedLang = language.trim().toLocaleLowerCase();
   return rows.slice(1).find(r =>
+    isEnabled(r) &&
+    (r[COL_ID] ?? "").trim().toLocaleLowerCase() === wantedId &&
+    (r[COL_LANGUAGE] ?? "").trim().toLocaleLowerCase() === wantedLang
+  );
+}
+
+// Vrai si l'ID existe mais que sa ligne est OFF (pour afficher « Désactivé »)
+function isDisabledRow(rows: Row[], id: string, language: string): boolean {
+  const wantedId = id.trim().toLocaleLowerCase();
+  const wantedLang = language.trim().toLocaleLowerCase();
+  return rows.slice(1).some(r =>
+    !isEnabled(r) &&
     (r[COL_ID] ?? "").trim().toLocaleLowerCase() === wantedId &&
     (r[COL_LANGUAGE] ?? "").trim().toLocaleLowerCase() === wantedLang
   );
 }
 
 // Applique le titre (ID) et l'image (colonne D, ou icône de base) sur la touche.
-// Reçoit l'action et les réglages explicitement : ne dépend d'aucun événement figé.
 async function refreshKey(
   action: WillAppearEvent<Settings>["action"],
   s: Settings,
   rows?: Row[],
 ) {
   if (s.mode !== "cell" && s.id) {
+    if (rows && isDisabledRow(rows, s.id, s.language ?? "") && !findRow(rows, s.id, s.language ?? "")) {
+      await action.setTitle("Désactivé");
+      const icon = await fetchImageDataUrl(DEFAULT_ICON_URL);
+      if (icon) await action.setImage(icon);
+      return;
+    }
     await action.setTitle(s.id);
   } else {
     await action.setTitle(DEFAULT_TITLE);
@@ -180,8 +206,7 @@ class CopyText extends SingletonAction<Settings> {
     await refreshKey(ev.action, s, rows);
   }
 
-  // Relit le Sheet toutes les minutes. Le timer lit les réglages courants
-  // dans settingsByAction et vérifie qu'il agit toujours sur le bon bouton.
+  // Relit le Sheet toutes les minutes et vérifie que le bouton n'a pas changé entre-temps.
   private startAutoRefresh(actionId: string, action: WillAppearEvent<Settings>["action"]) {
     const existing = timers.get(actionId);
     if (existing) clearInterval(existing);
@@ -190,8 +215,6 @@ class CopyText extends SingletonAction<Settings> {
       if (!s?.csvUrl) return;
       try {
         const rows = await fetchRows(s.csvUrl.trim(), 0);
-        // Vérification : relire les réglages avant d'écrire, au cas où le bouton
-        // a changé d'ID entre-temps (évite d'écraser l'affichage avec une autre donnée).
         const current = settingsByAction.get(actionId);
         if (!current || current.id !== s.id || current.language !== s.language || current.mode !== s.mode) return;
         await refreshKey(action, current, rows);
@@ -222,6 +245,7 @@ class CopyText extends SingletonAction<Settings> {
       }
       const wantedLang = (payload.language ?? "").trim().toLocaleLowerCase();
       const options = rows.slice(1)
+        .filter(r => isEnabled(r))
         .filter(r => (r[COL_ID] ?? "").trim() !== "")
         .filter(r => !wantedLang || (r[COL_LANGUAGE] ?? "").trim().toLocaleLowerCase() === wantedLang)
         .map(r => ({
@@ -247,7 +271,15 @@ class CopyText extends SingletonAction<Settings> {
       if (s.mode === "cell") text = cellValue(rows, s.cell ?? "");
       else {
         const row = findRow(rows, s.id ?? "", s.language ?? "");
-        if (!row) throw new Error(`Introuvable : ${s.id ?? "ID"} / ${s.language ?? "langue"}`);
+        if (!row) {
+          if (isDisabledRow(rows, s.id ?? "", s.language ?? "")) {
+            // Commande désactivée : on ne colle rien
+            await ev.action.showAlert();
+            await ev.action.setTitle("Désactivé");
+            return;
+          }
+          throw new Error(`Introuvable : ${s.id ?? "ID"} / ${s.language ?? "langue"}`);
+        }
         text = row[COL_TEXT] ?? "";
       }
       if (!text) throw new Error("Texte vide");
